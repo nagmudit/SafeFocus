@@ -22,8 +22,6 @@ import {
   ArrowRight,
 } from "lucide-react";
 import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
