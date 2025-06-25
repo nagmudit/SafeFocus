@@ -1,0 +1,15 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="8" cy="8" r="7.5" fill="#1f2937" stroke="#374151" stroke-width="1"/>
+  
+  <!-- Lock body -->
+  <rect x="5.5" y="8" width="5" height="4" rx="0.5" fill="#3b82f6"/>
+  
+  <!-- Lock shackle -->
+  <path d="M6.5 8V6C6.5 5.17157 7.17157 4.5 8 4.5C8.82843 4.5 9.5 5.17157 9.5 6V8" 
+        stroke="#3b82f6" stroke-width="1" fill="none" stroke-linecap="round"/>
+  
+  <!-- Lock keyhole -->
+  <circle cx="8" cy="9.5" r="0.75" fill="#1f2937"/>
+  <rect x="7.75" y="10" width="0.5" height="1" fill="#1f2937"/>
+</svg>
