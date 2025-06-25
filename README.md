@@ -120,7 +120,7 @@ npm start
 - `Escape`: Close any open modal or cancel task creation
 - `Space`: Complete the active task (coming soon)
 
-## 🏗️ Project Structure
+<!-- ## 🏗️ Project Structure
 
 ```
 src/
@@ -152,7 +152,7 @@ src/
 │   └── constants.ts
 └── types/                       # TypeScript type definitions
     └── task.ts
-```
+``` -->
 
 ## 🛠️ Tech Stack
 
