@@ -20,6 +20,9 @@ import {
   Shield,
   Users,
   ArrowRight,
+  Play,
+  Pause,
+  GripVertical,
 } from "lucide-react";
 import {
   XAxis,
@@ -55,7 +58,10 @@ export default function LockedTodoApp() {
   const [currentTaskStartTime, setCurrentTaskStartTime] = useState<
     number | null
   >(null);
+  const [isTaskActive, setIsTaskActive] = useState(false);
+  const [totalPausedTime, setTotalPausedTime] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [draggedTask, setDraggedTask] = useState<string | null>(null);
 
   // Load data from localStorage on component mount
   useEffect(() => {
@@ -66,6 +72,8 @@ export default function LockedTodoApp() {
         const savedStartTime = localStorage.getItem(
           "lockedTodoCurrentStartTime"
         );
+        const savedTaskActive = localStorage.getItem("lockedTodoTaskActive");
+        const savedPausedTime = localStorage.getItem("lockedTodoPausedTime");
 
         if (savedTasks) {
           const parsedTasks = JSON.parse(savedTasks);
@@ -80,6 +88,16 @@ export default function LockedTodoApp() {
         if (savedStartTime) {
           const parsedStartTime = JSON.parse(savedStartTime);
           setCurrentTaskStartTime(parsedStartTime);
+        }
+
+        if (savedTaskActive) {
+          const parsedTaskActive = JSON.parse(savedTaskActive);
+          setIsTaskActive(parsedTaskActive);
+        }
+
+        if (savedPausedTime) {
+          const parsedPausedTime = JSON.parse(savedPausedTime);
+          setTotalPausedTime(parsedPausedTime);
         }
 
         setIsLoaded(true);
@@ -128,6 +146,34 @@ export default function LockedTodoApp() {
     }
   }, [currentTaskStartTime, isLoaded]);
 
+  // Save task active state to localStorage whenever it changes
+  useEffect(() => {
+    if (isLoaded) {
+      try {
+        localStorage.setItem(
+          "lockedTodoTaskActive",
+          JSON.stringify(isTaskActive)
+        );
+      } catch (error) {
+        console.error("Error saving task active state to localStorage:", error);
+      }
+    }
+  }, [isTaskActive, isLoaded]);
+
+  // Save total paused time to localStorage whenever it changes
+  useEffect(() => {
+    if (isLoaded) {
+      try {
+        localStorage.setItem(
+          "lockedTodoPausedTime",
+          JSON.stringify(totalPausedTime)
+        );
+      } catch (error) {
+        console.error("Error saving paused time to localStorage:", error);
+      }
+    }
+  }, [totalPausedTime, isLoaded]);
+
   // Get the current active task (first incomplete task based on order)
   const incompleteTasks = tasks.filter((task) => !task.completed);
   const activeTask =
@@ -140,18 +186,19 @@ export default function LockedTodoApp() {
     (task) => task.id !== activeTask?.id
   );
 
-  // Start timing when a new task becomes active
+  // Reset timer state when a new task becomes active
   useEffect(() => {
-    if (isLoaded && activeTask && !currentTaskStartTime) {
-      const startTime = Date.now();
-      setCurrentTaskStartTime(startTime);
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.id === activeTask.id ? { ...task, startedAt: startTime } : task
-        )
-      );
+    if (
+      isLoaded &&
+      activeTask &&
+      activeTask.id !== tasks.find((t) => t.startedAt && !t.completed)?.id
+    ) {
+      // Reset all timer-related state when switching to a new task
+      setCurrentTaskStartTime(null);
+      setIsTaskActive(false);
+      setTotalPausedTime(0);
     }
-  }, [activeTask?.id, currentTaskStartTime, isLoaded]);
+  }, [activeTask?.id, isLoaded, tasks]);
 
   const addTask = () => {
     if (newTask.trim()) {
@@ -168,12 +215,41 @@ export default function LockedTodoApp() {
     }
   };
 
+  const startTask = () => {
+    if (activeTask) {
+      const startTime = Date.now();
+      setCurrentTaskStartTime(startTime);
+      setIsTaskActive(true);
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === activeTask.id
+            ? { ...task, startedAt: task.startedAt || startTime }
+            : task
+        )
+      );
+    }
+  };
+
+  const pauseTask = () => {
+    if (activeTask && currentTaskStartTime) {
+      const pauseTime = Date.now();
+      const sessionTime = pauseTime - currentTaskStartTime;
+      setTotalPausedTime((prev) => prev + sessionTime);
+      setCurrentTaskStartTime(null);
+      setIsTaskActive(false);
+    }
+  };
+
   const completeTask = (taskId: string) => {
     const completionTime = Date.now();
-    const task = tasks.find((t) => t.id === taskId);
-    const timeSpent = task?.startedAt
-      ? Math.round((completionTime - task.startedAt) / (1000 * 60))
-      : 0;
+
+    // Calculate total time including current session and previous paused time
+    let timeSpent = totalPausedTime;
+    if (currentTaskStartTime && isTaskActive) {
+      timeSpent += completionTime - currentTaskStartTime;
+    }
+
+    const finalTimeSpent = Math.round(timeSpent / (1000 * 60)); // Convert to minutes
 
     setTasks((prev) =>
       prev.map((task) =>
@@ -182,14 +258,16 @@ export default function LockedTodoApp() {
               ...task,
               completed: true,
               completedAt: completionTime,
-              timeSpent: timeSpent,
+              timeSpent: finalTimeSpent,
             }
           : task
       )
     );
 
-    // Reset timer
+    // Reset all timer-related state
     setCurrentTaskStartTime(null);
+    setIsTaskActive(false);
+    setTotalPausedTime(0);
 
     // Remove completed task from order
     setTaskOrder((prev) => prev.filter((id) => id !== taskId));
@@ -210,12 +288,56 @@ export default function LockedTodoApp() {
       return [taskId, ...filtered];
     });
     setShowTaskSelector(false);
-    setCurrentTaskStartTime(null); // Reset timer for new task
+    // Reset all timer-related state for new task
+    setCurrentTaskStartTime(null);
+    setIsTaskActive(false);
+    setTotalPausedTime(0);
   };
 
   const deleteTask = (taskId: string) => {
     setTasks((prev) => prev.filter((task) => task.id !== taskId));
     setTaskOrder((prev) => prev.filter((id) => id !== taskId));
+  };
+
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    // Only allow dragging if the current task hasn't been started
+    if (isTaskActive || currentTaskStartTime || totalPausedTime > 0) {
+      e.preventDefault();
+      return;
+    }
+    setDraggedTask(taskId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (
+      draggedTask &&
+      (isTaskActive || currentTaskStartTime || totalPausedTime > 0)
+    ) {
+      // Don't allow drop if task is active
+      setDraggedTask(null);
+      return;
+    }
+
+    if (draggedTask) {
+      // Move the dragged task to the front of the order (make it active)
+      setTaskOrder((prev) => {
+        const filtered = prev.filter((id) => id !== draggedTask);
+        return [draggedTask, ...filtered];
+      });
+      setDraggedTask(null);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedTask(null);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -338,10 +460,21 @@ export default function LockedTodoApp() {
 
   const analytics = getAnalytics();
 
+  // Check if the safe should be locked (user has started working on current task)
+  const isSafeLocked =
+    isTaskActive || currentTaskStartTime !== null || totalPausedTime > 0;
+
   // Current task timer
   const getCurrentTaskTime = () => {
-    if (!activeTask || !currentTaskStartTime) return 0;
-    return Math.round((Date.now() - currentTaskStartTime) / (1000 * 60));
+    if (!activeTask) return 0;
+
+    let totalTime = totalPausedTime; // Add accumulated paused time
+
+    if (currentTaskStartTime && isTaskActive) {
+      totalTime += Date.now() - currentTaskStartTime; // Add current session time
+    }
+
+    return Math.round(totalTime / (1000 * 60)); // Convert to minutes
   };
 
   // Clear all data function for testing/reset
@@ -354,9 +487,13 @@ export default function LockedTodoApp() {
       localStorage.removeItem("lockedTodoTasks");
       localStorage.removeItem("lockedTodoTaskOrder");
       localStorage.removeItem("lockedTodoCurrentStartTime");
+      localStorage.removeItem("lockedTodoTaskActive");
+      localStorage.removeItem("lockedTodoPausedTime");
       setTasks([]);
       setTaskOrder([]);
       setCurrentTaskStartTime(null);
+      setIsTaskActive(false);
+      setTotalPausedTime(0);
     }
   };
 
@@ -373,14 +510,23 @@ export default function LockedTodoApp() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 p-6">
+    <div
+      className={`min-h-screen bg-gray-900 text-gray-100 p-6 ${
+        draggedTask ? "cursor-grabbing" : ""
+      }`}
+    >
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div className="text-center flex-1">
             <h1 className="text-3xl font-bold text-gray-100 mb-2">SafeFocus</h1>
             <p className="text-gray-400">Secure your tasks, focus on one</p>
-            {tasks.length > 0 && (
+            {draggedTask && (
+              <p className="text-xs text-blue-400 mt-1 animate-pulse">
+                🎯 Drag to the current task area to activate
+              </p>
+            )}
+            {tasks.length > 0 && !draggedTask && (
               <p className="text-xs text-gray-500 mt-1">
                 Data automatically saved • {completedTasks.length} completed of{" "}
                 {tasks.length} total
@@ -420,10 +566,17 @@ export default function LockedTodoApp() {
           {/* Safe Side - Locked Tasks */}
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Lock className="w-5 h-5" />
-                Safe ({lockedTasks.length} locked)
-              </h2>
+              <div>
+                <h2 className="text-xl font-semibold flex items-center gap-2">
+                  <Lock className="w-5 h-5" />
+                  Safe ({lockedTasks.length} locked)
+                </h2>
+                {!isSafeLocked && lockedTasks.length > 0 && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Drag tasks to reorder or activate them
+                  </p>
+                )}
+              </div>
               <button
                 onClick={() => setShowAddForm(true)}
                 className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-lg transition-colors"
@@ -467,8 +620,17 @@ export default function LockedTodoApp() {
 
             {/* Safe Vault Visual */}
             <div className="bg-gray-900 rounded-lg p-8 border-2 border-gray-600 relative">
-              <div className="absolute top-4 right-4">
-                <Lock className="w-8 h-8 text-gray-500" />
+              <div className="absolute top-4 right-4 flex items-center gap-2">
+                {isSafeLocked && (
+                  <div className="bg-red-600 text-white px-2 py-1 rounded text-xs font-medium">
+                    LOCKED
+                  </div>
+                )}
+                <Lock
+                  className={`w-8 h-8 ${
+                    isSafeLocked ? "text-red-400" : "text-gray-500"
+                  }`}
+                />
               </div>
 
               {lockedTasks.length === 0 ? (
@@ -479,29 +641,53 @@ export default function LockedTodoApp() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {lockedTasks.map((task, index) => (
-                    <div
-                      key={task.id}
-                      className="bg-gray-800 p-3 rounded border border-gray-600 opacity-60"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-400 flex items-center gap-2">
-                          <Lock className="w-4 h-4" />
-                          Task #{index + 2} (Locked)
-                        </span>
-                        <button
-                          onClick={() => deleteTask(task.id)}
-                          className="text-gray-500 hover:text-red-400 transition-colors"
-                          title="Delete task"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="text-gray-500 text-sm mt-1 blur-sm select-none">
-                        {task.text.replace(/./g, "•")}
+                  {isSafeLocked ? (
+                    // Locked state - tasks are completely hidden and non-interactive
+                    <div className="text-center text-gray-500 py-8">
+                      <Lock className="w-16 h-16 mx-auto mb-4 text-red-400" />
+                      <p className="text-red-400 font-medium">Safe is Locked</p>
+                      <p className="text-sm">
+                        Finish or pause your current task to access other tasks
+                      </p>
+                      <div className="mt-4 text-xs text-gray-600">
+                        {lockedTasks.length} task
+                        {lockedTasks.length !== 1 ? "s" : ""} locked away
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    // Unlocked state - tasks can be dragged and reordered
+                    lockedTasks.map((task, index) => (
+                      <div
+                        key={task.id}
+                        draggable={!isSafeLocked}
+                        onDragStart={(e) => handleDragStart(e, task.id)}
+                        onDragEnd={handleDragEnd}
+                        className={`bg-gray-800 p-3 rounded border border-gray-600 transition-all duration-200 ${
+                          draggedTask === task.id
+                            ? "opacity-50 scale-95"
+                            : "opacity-60 hover:opacity-80 cursor-move"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 flex items-center gap-2">
+                            <GripVertical className="w-4 h-4 text-gray-500" />
+                            <Lock className="w-4 h-4" />
+                            Task #{index + 2} (Drag to activate)
+                          </span>
+                          <button
+                            onClick={() => deleteTask(task.id)}
+                            className="text-gray-500 hover:text-red-400 transition-colors"
+                            title="Delete task"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="text-gray-500 text-sm mt-1 blur-sm select-none">
+                          {task.text.replace(/./g, "•")}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
             </div>
@@ -523,11 +709,34 @@ export default function LockedTodoApp() {
 
             {activeTask ? (
               <div className="space-y-6">
-                <div className="bg-gray-700 p-6 rounded-lg border border-gray-600">
+                <div
+                  className={`bg-gray-700 p-6 rounded-lg border border-gray-600 transition-all duration-200 ${
+                    !isSafeLocked && draggedTask
+                      ? "border-blue-500 bg-blue-900 bg-opacity-20"
+                      : ""
+                  }`}
+                  onDragOver={!isSafeLocked ? handleDragOver : undefined}
+                  onDrop={!isSafeLocked ? handleDrop : undefined}
+                >
+                  {!isSafeLocked && draggedTask && (
+                    <div className="text-center py-2 mb-4 border-2 border-dashed border-blue-400 rounded-lg bg-blue-500 bg-opacity-10">
+                      <p className="text-blue-400 text-sm font-medium">
+                        Drop here to make this your current task
+                      </p>
+                    </div>
+                  )}
+
                   <div className="flex items-start justify-between mb-4">
-                    <span className="text-blue-400 text-sm font-medium">
-                      Task #1 - Active
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-blue-400 text-sm font-medium">
+                        Task #1 - Active
+                      </span>
+                      {!isSafeLocked && (
+                        <span className="text-xs text-gray-500 bg-gray-600 px-2 py-1 rounded">
+                          Can be changed
+                        </span>
+                      )}
+                    </div>
                     <button
                       onClick={() => deleteTask(activeTask.id)}
                       className="text-gray-500 hover:text-red-400 transition-colors"
@@ -541,24 +750,56 @@ export default function LockedTodoApp() {
                   </p>
 
                   {/* Current Task Timer */}
-                  <div className="bg-gray-600 p-3 rounded-lg mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-blue-400" />
-                      <span className="text-sm text-gray-300">Time spent:</span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-lg font-mono text-blue-400">
-                        {getCurrentTaskTime()}m
-                      </span>
-                      <div className="text-xs text-gray-400">
-                        Started:{" "}
-                        {currentTaskStartTime
-                          ? new Date(currentTaskStartTime).toLocaleTimeString(
-                              [],
-                              { hour: "2-digit", minute: "2-digit" }
-                            )
-                          : "--:--"}
+                  <div className="bg-gray-600 p-3 rounded-lg mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-blue-400" />
+                        <span className="text-sm text-gray-300">
+                          Time spent:
+                        </span>
                       </div>
+                      <div className="text-right">
+                        <span className="text-lg font-mono text-blue-400">
+                          {getCurrentTaskTime()}m
+                        </span>
+                        <div className="text-xs text-gray-400">
+                          Status: {isTaskActive ? "Active" : "Not started"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Start/Pause Controls */}
+                    <div className="flex gap-2">
+                      {!isTaskActive ? (
+                        <button
+                          onClick={startTask}
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                        >
+                          <Play className="w-4 h-4" />
+                          Start Task
+                        </button>
+                      ) : (
+                        <button
+                          onClick={pauseTask}
+                          className="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                        >
+                          <Pause className="w-4 h-4" />
+                          Pause Task
+                        </button>
+                      )}
+
+                      {(isTaskActive || totalPausedTime > 0) && (
+                        <div className="text-xs text-gray-400 flex items-center px-2">
+                          {currentTaskStartTime && isTaskActive
+                            ? `Started: ${new Date(
+                                currentTaskStartTime
+                              ).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}`
+                            : "Paused"}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -593,8 +834,24 @@ export default function LockedTodoApp() {
                 </div>
               </div>
             ) : (
-              <div className="text-center py-12">
-                {tasks.length === 0 ? (
+              <div
+                className={`text-center py-12 transition-all duration-200 ${
+                  draggedTask && tasks.length > 0
+                    ? "border-2 border-dashed border-blue-400 rounded-lg bg-blue-500 bg-opacity-10"
+                    : ""
+                }`}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
+                {draggedTask && tasks.length > 0 ? (
+                  <div className="text-blue-400">
+                    <div className="w-16 h-16 mx-auto mb-4 bg-blue-600 rounded-full flex items-center justify-center">
+                      <Target className="w-8 h-8" />
+                    </div>
+                    <p className="text-lg mb-2">Drop here to activate task</p>
+                    <p className="text-sm">Make this task your current focus</p>
+                  </div>
+                ) : tasks.length === 0 ? (
                   <div className="text-gray-500">
                     <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
                       <Plus className="w-8 h-8" />
